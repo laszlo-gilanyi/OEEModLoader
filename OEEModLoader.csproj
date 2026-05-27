@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>OEEModLoader</AssemblyName>
+    <RootNamespace>OEEModLoader</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == ''">/mnt/windows/Program Files (x86)/Steam/steamapps/common/Heroes of Might and Magic Olden Era</GameDir>
+    <BepInExCore>$(GameDir)/BepInEx/core</BepInExCore>
+    <BepInExInterop>$(GameDir)/BepInEx/interop</BepInExInterop>
+    <PluginsDir>$(GameDir)/BepInEx/plugins</PluginsDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx.Core">
+      <HintPath>$(BepInExCore)/BepInEx.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>$(BepInExCore)/BepInEx.Unity.IL2CPP.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(BepInExCore)/Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCore)/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(BepInExInterop)/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(BepInExInterop)/UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(BepInExInterop)/Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(BepInExInterop)/UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(BepInExInterop)/UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(BepInExInterop)/UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Deploy the plugin DLL + its NuGet deps (SharpGLTF etc.) into the plugins
+       folder. BepInEx/Unity DLLs are excluded since they already exist there. -->
+  <Target Name="DeployToPlugins" AfterTargets="Build">
+    <ItemGroup>
+      <DeployFiles Include="$(TargetDir)*.dll"
+                   Exclude="$(TargetDir)BepInEx.*.dll;$(TargetDir)Il2Cpp*.dll;$(TargetDir)0Harmony.dll;$(TargetDir)UnityEngine.*.dll;$(TargetDir)UnityEngine.dll;$(TargetDir)Mono*.dll;$(TargetDir)System.*.dll;$(TargetDir)netstandard.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DeployFiles)" DestinationFolder="$(PluginsDir)" />
+    <Message Text="Deployed @(DeployFiles->Count()) file(s) to $(PluginsDir)" Importance="high" />
+  </Target>
+
+</Project>
