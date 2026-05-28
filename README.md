@@ -36,7 +36,7 @@ That folder is in:
 Launch the game once and check `BepInEx/LogOutput.log` for:
 
 ```
-[Message:OEE Mod Loader] === OEE Mod Loader v0.10.0 loading ===
+[Message:OEE Mod Loader] === OEE Mod Loader v0.14.0 loading ===
 [Message:OEE Mod Loader] Scanning .../BepInEx/plugins for *.glb: found 0 file(s).
 ```
 
@@ -44,25 +44,21 @@ If you see that, the plugin loaded.
 
 ## Make a mod
 
-1. Run OEE, open the unit you want to mod in the Viewer. Note the unit ID shown under the model name (e.g. `lava_larva`).
+1. Run OEE, open the unit you want to mod in the Viewer. Note the unit ID shown under the model name (e.g. `esquire`, `crossbowman`, `griffin_upg`).
 2. Click the export GLB button.
-3. Open the exported GLB in Blender. Edit the mesh, the materials, the textures. Keep the armature and the bone names intact.
-4. Export back to GLB from Blender (`File > Export > glTF 2.0 (.glb/.gltf)`).
-5. Rename the exported file to `<unit_id>.glb` (e.g. `lava_larva.glb`) and drop it into `BepInEx/plugins/`.
-6. Launch the game. The plugin loads the GLB at startup and swaps the unit's appearance whenever the unit shows up in a battle or scene.
+3. Open the exported GLB in Blender. Edit the mesh, the materials, the textures, or even the animations. The vanilla animations (idle, walk, attack, damage, victory, fly_*, idle_rare, death) are kept in the export and the loader plays whichever one matches the vanilla unit's current Mecanim state.
+4. Export back to GLB from Blender (`File > Export > glTF 2.0 (.glb/.gltf)`). Tick **Include > Animations** and **Data > Materials > Export** if you want those round-tripped.
+5. Rename the exported file to `<unit_id>.glb` (e.g. `esquire.glb`) and drop it into `BepInEx/plugins/`.
+6. Launch the game. The plugin loads the GLB at startup and swaps the unit's appearance + animation whenever the unit spawns in a battle, the preview window, or any other scene.
 
-The unit ID is matched as a case-insensitive substring against runtime GameObject names, so a name like `lava_larva #8 S0` matches `lava_larva.glb`.
+The unit ID matches the runtime GameObject name **exactly** (case-insensitive, with the Unity `(Clone)` suffix stripped). So `esquire.glb` swaps `esquire` / `Esquire(Clone)`, but leaves `esquire_upg`, `esquire_upg_alt`, and `esquire_map` untouched. If you want to swap one of those, drop a separately-named `esquire_upg.glb`, `esquire_upg_alt.glb`, or `esquire_map.glb` alongside it. The `_map` variants are the strategic-map appearance and are intentionally skipped by `<unit_id>.glb`, so a battle-only swap doesn't ripple onto the world map.
 
 ## Constraints for the GLB
 
-- **Bone names must match the vanilla skeleton.** Bone weights remap by name. A bone in the mod GLB with no vanilla counterpart silently falls through to bone 0, which usually produces broken deformation.
-- **One swarm-instance per logical mesh in the GLB.** A unit like `lava_larva` is three creatures in one stack; vanilla has one mesh per creature, weighted to its own bone subtree (no prefix, `Bug2_*`, `Bug3_*`). Your mod GLB should also have one mesh per swarm-instance in the same order. If your mod has fewer meshes than vanilla has swarm-instances, the plugin reuses your meshes cyclically.
-- **Single-creature units use one mesh.** A unit with no swarm-instances expects one mesh in the GLB.
-- **Body part heuristic.** When a unit has multiple part groups (`body_upg`, `belly_inner_upg`), the plugin picks the largest group as "main body" and hides the rest. If you want to mod a different part (e.g. the inner mouth), the current version does not support that without picking a name match for that group.
-
-## Hotkeys
-
-- **F1**: dumps every loaded `GameObject` whose name contains a registered mod ID, into the BepInEx log. Useful for diagnosing whether the plugin sees the unit at all and what name the game uses for it.
+- **Bone names should match the vanilla skeleton.** The mod skeleton is rebuilt from the GLB and animated by the GLB's own glTF channels, but the loader still locates the "Root" joint by name to suppress baked walk-cycle root motion (which the game already applies via the unit transform). Renaming `Root` to something else means the mod will slide forward through its own walk cycle.
+- **Material alpha mode and double-sidedness.** `alphaMode = MASK` enables alpha clipping with the GLB's cutoff. `alphaMode = BLEND` enables transparent rendering. `doubleSided = true` disables backface culling. All three are read straight from the glTF material.
+- **One texture per material.** The base-color texture is taken from the material's `pbrMetallicRoughness.baseColorTexture` channel. Normal maps, metallic-roughness maps, emissive maps, and occlusion maps are intentionally NOT carried over: the loader clones the vanilla unit's material (so the game's `Hex/Lit` shader and lighting rig are preserved) and overrides only its main texture with the GLB's diffuse.
+- **Multi-skin GLBs are supported.** Units like `crossbowman` (2 skins) or `griffin` (3 skins) are rebuilt as one SkinnedMeshRenderer per mesh, each bound to its own skin's joint subset.
 
 ## Build from source
 
@@ -81,18 +77,20 @@ References (BepInEx core DLLs, IL2CPP interop assemblies) are resolved from `<Ga
 
 ## How it works
 
-1. **Load.** On `BasePlugin.Load`, the plugin enumerates `BepInEx/plugins/*.glb`. Each file is parsed with SharpGLTF; positions, normals, UVs, bone weights, bind poses, joint names, and embedded texture bytes are kept in memory.
-2. **glTF to Unity conversion.** glTF stores meshes in a right-handed coordinate system with UV origin at top-left. Unity uses left-handed with UV origin at bottom-left. Position Z and normal Z are negated, triangle winding is reversed, UV V is flipped, and bind poses get an `S * M * S` (with `S = diag(1,1,-1,1)`) transform to land in Unity space.
-3. **Watcher.** A MonoBehaviour scans `Resources.FindObjectsOfTypeAll<SkinnedMeshRenderer>` once per second. For each renderer, the transform tree is walked up looking for a `GameObject` whose name contains a registered mod ID.
-4. **Patch.** Renderers under the same matched ancestor are grouped together; each group is patched once. The plugin partitions a unit's renderers by part name (stripping trailing `_<digit>` swarm-index suffixes), keeps the largest part group, applies one mod mesh per renderer in it (with bone-name-based weight remapping), and force-hides every renderer in the other part groups.
-5. **Materials.** Vanilla materials are cloned per renderer and their `mainTexture` is replaced with the first image from the GLB. Other vanilla material properties (shader, normal map, PBR factors) are preserved.
+1. **Load.** On `BasePlugin.Load`, the plugin enumerates `BepInEx/plugins/*.glb`. Each file is parsed with SharpGLTF; meshes (positions, normals, UVs, bone weights), bind poses, every glTF node's local TRS (used as the rebuilt skeleton's rest pose), embedded textures, and every animation's translation / rotation / scale channels are kept in memory. The X axis is mirrored on positions, normals and rotations, triangle winding is reversed, UV V is flipped, and bind poses are conjugated through the X mirror to land in Unity left-handed space.
+2. **Watcher.** A MonoBehaviour scans `Resources.FindObjectsOfTypeAll<SkinnedMeshRenderer>` once per second. Prefab assets (scene-invalid), already-hidden vanilla renderers, and renderers under our own `OEEMod_*` hierarchy are skipped. The remaining renderers have their transform chain walked up; the first ancestor whose name matches a loaded mod (exact, Clone-stripped) becomes the patch target.
+3. **Re-patch guard.** On the first patch of a unit root we add an empty `OEEPatchedMarker` MonoBehaviour to it. The marker survives the game's `Instantiate` respawn cycle (which would otherwise hand us a fresh InstanceID and trigger a full rebuild every scan), so each logical unit is patched exactly once.
+4. **Build the mod hierarchy.** Under the unit root we drop a `OEEMod_<unit_id>` GameObject. Below it we rebuild every glTF node as a Unity `Transform`, with parent / child relationships and local TRS taken from the file. For each glTF mesh we add a `SkinnedMeshRenderer` GameObject whose `bones` array points at the rebuilt joints for its skin, with the bind poses, vertex bone weights, and triangle indices carried over.
+5. **Materials.** For each mesh we clone the vanilla unit's body material (`Hex/Lit` family) and replace its base color texture with the GLB's `baseColorTexture` image (resolved through `material -> texture -> primary image`). Normal / emission / occlusion / metallic maps are nulled out (they reference the vanilla UV layout). `alphaMode = MASK` is wired up to `_AlphaClipEnabled` + `_AlphaCutoff`; `alphaMode = BLEND` flips the clone to Transparent surface mode and a SrcAlpha / OneMinusSrcAlpha blend; `doubleSided = true` sets `_CullMode = 0`.
+6. **Hide vanilla mesh, keep vanilla state machine.** The unit's vanilla `SkinnedMeshRenderer`s get `forceRenderingOff = true` plus a large `localBounds`. The vanilla Mecanim Animator was authored with `cullingMode = CullCompletely`, which would normally halt its state machine when the renderer is culled; the giant bounds keep it visible to the culling system so the state machine keeps ticking. We also pin `cullingMode = AlwaysAnimate` once at patch time as a belt-and-braces measure.
+7. **Drive the mod skeleton from the vanilla state machine.** Every frame, a `ModAnimator` MonoBehaviour reads `Animator.GetCurrentAnimatorStateInfo(0).shortNameHash` on the vanilla animator and maps the hash to one of the GLB's animation clips via a static table (`move 0` -> `walk`, `Attack Tree 2` -> `attack`, `damage 0` -> `damage`, etc., taken straight from `_Battle_Unit_Anim_ctrl_v2`). The matching clip is sampled into the rebuilt skeleton's transforms each frame. Non-looping clips (attack, damage, death, victory) clamp on their final pose instead of restarting; loop clips (idle, walk, fly, idle_rare) wrap. The mod skeleton's world TRS is synced from the vanilla animator GameObject every frame so the facing direction, position, and sign-preserving size match the side of the battlefield the unit is on.
 
 ## Limitations
 
-- One main-body group per unit; non-main part groups (inner parts, secondary attachments) are hidden, not modded. A future revision could let mods address specific part groups.
-- Mod materials beyond the diffuse texture (normal map, emission, etc.) are not exposed; the vanilla material is reused with only `mainTexture` overridden.
-- Units whose LOD switching uses a `_<digit>` suffix on renderer names (rather than swarm-instance indices) will over-render LOD1/LOD2 on top of LOD0. The plugin currently treats `_<digit>` as instance index. Not observed yet on test cases.
-- No data overrides. Stats, scale (`scale` in the unit's `_v.json` inside `Core.zip`), abilities, etc. stay vanilla.
+- **No bone retargeting.** The mod's animations play on the GLB's own skeleton, not on the vanilla rig. The result is a mod-side rebuild that lives in parallel with the vanilla rig; the vanilla rig itself stays hidden and unused.
+- **Single base-color texture per material.** Normal, metallic, occlusion, and emissive maps from the GLB are not currently passed through.
+- **Map-variant `_map` swaps require their own GLB.** The default `<unit_id>.glb` deliberately does not touch strategic-map clones.
+- **No data overrides.** Stats, abilities, scale (`scale` in the unit's `_v.json` inside `Core.zip`), and any other game data stay vanilla.
 
 ## Licence
 

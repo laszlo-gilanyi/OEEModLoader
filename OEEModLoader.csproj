@@ -19,7 +19,13 @@
 
   <ItemGroup>
     <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.5" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
+
+  <!-- GLTFUtility (Siccity, MIT) embedded as source. Compiled against the
+       IL2CPP-wrapped Unity API via our existing references; UnityEditor branches
+       in the original are guarded by #if UNITY_EDITOR and stay disabled here. -->
+  <!-- (Files are picked up by the default Compile glob.) -->
 
   <ItemGroup>
     <Reference Include="BepInEx.Core">
@@ -60,6 +66,10 @@
     </Reference>
     <Reference Include="UnityEngine.ImageConversionModule">
       <HintPath>$(BepInExInterop)/UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.DirectorModule">
+      <HintPath>$(BepInExInterop)/UnityEngine.DirectorModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

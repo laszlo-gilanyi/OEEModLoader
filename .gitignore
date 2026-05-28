@@ -1,2 +1,13 @@
 bin/
 obj/
+
+# Unity Editor cache from running batch-mode dump tools against ripped projects.
+Library/
+ProjectSettings/
+UserSettings/
+
+# Hand-rolled backups; git history is the canonical archive.
+*.bak.*
+
+# macOS Finder metadata.
+.DS_Store
