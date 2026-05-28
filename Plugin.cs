@@ -60,7 +60,7 @@ public class Plugin : BasePlugin
 {
     public const string PluginGuid = "com.oldenera.explorer.modloader";
     public const string PluginName = "OEE Mod Loader";
-    public const string PluginVersion = "0.14.0";
+    public const string PluginVersion = "0.14.1";
 
     public static readonly Dictionary<string, ModData> Mods =
         new Dictionary<string, ModData>(StringComparer.OrdinalIgnoreCase);
@@ -961,35 +961,23 @@ public class ModWatcher : MonoBehaviour
         try { clone.SetColor("_EmissionColor", Color.black); } catch { }
         try { clone.SetColor("_EmissiveColor", Color.black); } catch { }
 
-        if (alphaMode == 1)
+        // MASK and BLEND both render as alpha-tested cutouts on the Opaque
+        // pass. Blender's glTF exporter defaults to alphaMode=BLEND for any
+        // material with a sub-1 alpha channel, but the Hex/Lit contour-line
+        // pass runs on Opaque-queued objects only. Sending the clone to the
+        // Transparent queue (renderQueue 3000, ZWrite off) hides the unit
+        // outline and makes the silhouette look flat-shaded. Treating both
+        // alpha modes as cutout keeps the outline intact, which is what
+        // matters in-game. Authors that actually want translucency would
+        // have to opt in to a future setting.
+        if (alphaMode == 1 || alphaMode == 2)
         {
-            // MASK: alpha-tested cutout. The Hex/Lit shader uses
-            // _AlphaClipEnabled + HEX_ALPHA_CLIP_ENABLED keyword (per the
-            // AssetRipper shader dump). _AlphaClip / _ALPHATEST_ON are the
-            // URP/Lit equivalents; setting both keeps either shader family
-            // happy. SetFloat / EnableKeyword silently no-op on absent props.
             try { clone.SetFloat("_AlphaClipEnabled", 1.0f); } catch { }
             try { clone.EnableKeyword("HEX_ALPHA_CLIP_ENABLED"); } catch { }
             try { clone.SetFloat("_AlphaClip", 1.0f); } catch { }
             try { clone.EnableKeyword("_ALPHATEST_ON"); } catch { }
             try { clone.SetFloat("_AlphaCutoff", alphaCutoff); } catch { }
             try { clone.SetFloat("_Cutoff", alphaCutoff); } catch { }
-        }
-        else if (alphaMode == 2)
-        {
-            // BLEND: alpha-blended transparency. The vanilla material clone is
-            // typically Opaque mode; without flipping it to Transparent the
-            // texture alpha is ignored and transparent regions render as solid
-            // base color (e.g. the black face-card on the moddolt esquire).
-            try { clone.SetFloat("_Surface", 1.0f); } catch { } // URP/Lit: 1=Transparent
-            try { clone.SetFloat("_Blend", 0.0f); } catch { }   // URP/Lit: 0=Alpha
-            try { clone.SetFloat("_ZWrite", 0.0f); } catch { }
-            try { clone.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha); } catch { }
-            try { clone.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha); } catch { }
-            try { clone.EnableKeyword("_SURFACE_TYPE_TRANSPARENT"); } catch { }
-            try { clone.EnableKeyword("_ALPHABLEND_ON"); } catch { }
-            try { clone.DisableKeyword("_ALPHATEST_ON"); } catch { }
-            try { clone.renderQueue = 3000; } catch { }         // Transparent queue
         }
 
         if (doubleSided)
