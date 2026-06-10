@@ -60,7 +60,7 @@ public class Plugin : BasePlugin
 {
     public const string PluginGuid = "com.oldenera.explorer.modloader";
     public const string PluginName = "OEE Mod Loader";
-    public const string PluginVersion = "0.14.1";
+    public const string PluginVersion = "0.14.2";
 
     public static readonly Dictionary<string, ModData> Mods =
         new Dictionary<string, ModData>(StringComparer.OrdinalIgnoreCase);
@@ -1148,9 +1148,8 @@ public class ModAnimator : MonoBehaviour
 
     public static int SelectDefaultClip(ModAnim[] anims)
     {
-        for (int i = 0; i < anims.Length; i++)
-            if (string.Equals(anims[i].Name, "idle", StringComparison.OrdinalIgnoreCase)) return i;
-        return 0;
+        int idx = FindBestModClip(anims, "idle");
+        return idx >= 0 ? idx : 0;
     }
 
     // Mirror of ModWatcher.PickBattleAnimator but only called for refresh,
@@ -1235,21 +1234,101 @@ public class ModAnimator : MonoBehaviour
         return _stateHashToModName.TryGetValue(stateHash, out var name) ? name : null;
     }
 
-    // Loop-vs-single-shot classification: vanilla Mecanim loops 'idle', 'walk'
-    // and a pure 'fly' indefinitely; everything else (attack, damage, victory,
-    // death, ability_*, fly_start, fly_end, *_rare counted as a single play
-    // alongside its parent loop) is single-shot. NormalizeClipName lowercases
-    // and strips non-alphanumerics, so 'Idle_Rare' becomes 'idlerare', which
-    // we still treat as a loop because the vanilla controller loops it.
+    // Loop-vs-single-shot classification. The vanilla Mecanim controller loops
+    // idle / idle_rare / walk / pure fly; everything else (attack, damage,
+    // victory, death, ability_*, fly_start, fly_end) is single-shot. Mod clip
+    // names carry unit-specific decorators (qilin_upg's 'idle_upg' / 'walk_upg'
+    // / 'idle_rare_upg', for instance), so we tokenize on non-alphanumerics
+    // and look at the action prefix instead of comparing the whole string.
+    // One-shot prefixes ('fly_start', 'fly_end') are checked before the
+    // 'fly' loop prefix so a 'fly_start_*' clip is correctly one-shot.
     private static bool IsLoopingClipName(string name)
     {
-        var n = NormalizeClipName(name);
-        if (n == "idle" || n == "idlerare" || n == "walk" || n == "fly") return true;
-        // Tail-loops like 'walkability' / 'walkabilityloop' / '01walk' should
-        // still loop. Use a token check instead of a blanket Contains("fly")
-        // (which would falsely include fly_start / fly_end).
-        if (n.EndsWith("idle") || n.EndsWith("walk") || n.EndsWith("fly")) return true;
+        var tokens = TokenizeClipName(name);
+        if (tokens.Length == 0) return false;
+        if (TokensStartWith(tokens, _flyStartTokens)) return false;
+        if (TokensStartWith(tokens, _flyEndTokens)) return false;
+        if (TokensStartWith(tokens, _idleRareTokens)) return true;
+        if (tokens[0] == "idle" || tokens[0] == "walk" || tokens[0] == "fly") return true;
+        var last = tokens[tokens.Length - 1];
+        if (last == "idle" || last == "walk" || last == "fly") return true;
         return false;
+    }
+
+    private static readonly string[] _flyStartTokens = new[] { "fly", "start" };
+    private static readonly string[] _flyEndTokens = new[] { "fly", "end" };
+    private static readonly string[] _idleRareTokens = new[] { "idle", "rare" };
+
+    // Tokenize on non-alphanumeric boundaries, lowercasing letters. 'Idle_Rare'
+    // -> ['idle','rare'], 'ability1_end_qilin_upg_vfx' -> ['ability1','end',
+    // 'qilin','upg','vfx'].
+    private static string[] TokenizeClipName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return Array.Empty<string>();
+        var parts = new List<string>();
+        var cur = new StringBuilder();
+        for (int i = 0; i < name.Length; i++)
+        {
+            char c = name[i];
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) cur.Append(c);
+            else if (c >= 'A' && c <= 'Z') cur.Append((char)(c + 32));
+            else if (cur.Length > 0) { parts.Add(cur.ToString()); cur.Clear(); }
+        }
+        if (cur.Length > 0) parts.Add(cur.ToString());
+        return parts.ToArray();
+    }
+
+    private static bool TokensStartWith(string[] tokens, string[] prefix)
+    {
+        if (tokens.Length < prefix.Length) return false;
+        for (int i = 0; i < prefix.Length; i++)
+            if (tokens[i] != prefix[i]) return false;
+        return true;
+    }
+
+    // Map a target mod-clip name (the right-hand side of _stateToModClip, e.g.
+    // 'idle' / 'idle_rare' / 'walk' / 'attack') to an index in the mod's anim
+    // list. Mods carry the action name with optional unit-specific decorators
+    // ('idle_upg', 'attack_upg', 'esquire@walk', ...). We tokenize both names
+    // and accept the target as a contiguous token-sublist of the mod clip
+    // name, choosing the candidate with the fewest leftover tokens, with ties
+    // broken by earliest match position. That keeps target 'idle' from being
+    // grabbed by 'idle_rare_upg' (leftover 2) when 'idle_upg' (leftover 1) is
+    // present, while still letting target 'idle_rare' pick 'idle_rare_upg'.
+    public static int FindBestModClip(ModAnim[] anims, string target)
+    {
+        if (anims == null || anims.Length == 0) return -1;
+        var tt = TokenizeClipName(target);
+        if (tt.Length == 0) return -1;
+        int bestIdx = -1;
+        int bestLeftover = int.MaxValue;
+        int bestPos = int.MaxValue;
+        for (int i = 0; i < anims.Length; i++)
+        {
+            var a = anims[i];
+            if (a == null) continue;
+            var mt = TokenizeClipName(a.Name);
+            if (mt.Length < tt.Length) continue;
+            int matchPos = -1;
+            for (int p = 0; p <= mt.Length - tt.Length; p++)
+            {
+                bool ok = true;
+                for (int k = 0; k < tt.Length; k++)
+                {
+                    if (mt[p + k] != tt[k]) { ok = false; break; }
+                }
+                if (ok) { matchPos = p; break; }
+            }
+            if (matchPos < 0) continue;
+            int leftover = mt.Length - tt.Length;
+            if (leftover < bestLeftover || (leftover == bestLeftover && matchPos < bestPos))
+            {
+                bestLeftover = leftover;
+                bestPos = matchPos;
+                bestIdx = i;
+            }
+        }
+        return bestIdx;
     }
 
     private static readonly HashSet<string> _seenClipMatches = new HashSet<string>();
@@ -1289,15 +1368,7 @@ public class ModAnimator : MonoBehaviour
 
         if (string.IsNullOrEmpty(bestClip)) return;
 
-        int matchIdx = -1;
-        for (int i = 0; i < s.Animations.Length; i++)
-        {
-            if (ClipNamesMatch(s.Animations[i].Name, bestClip))
-            {
-                matchIdx = i;
-                break;
-            }
-        }
+        int matchIdx = FindBestModClip(s.Animations, bestClip);
 
         if (matchIdx < 0)
         {
@@ -1326,29 +1397,6 @@ public class ModAnimator : MonoBehaviour
         // transitions away and back, the CurrentClip switch above will reset
         // Elapsed for us. Without this guard, a unit that died (Mecanim sits
         // permanently in 'die 0') would replay its death animation forever.
-    }
-
-    // Tolerant clip-name match. The vanilla controller and the GLB export
-    // sometimes disagree on punctuation / case ('attack_2' vs 'attack2',
-    // 'Idle_Rare' vs 'idle_rare', 'Esquire@attack' vs 'attack'). Compare with
-    // all non-alphanumerics stripped and lowercased.
-    private static bool ClipNamesMatch(string modName, string vanillaName)
-    {
-        if (string.IsNullOrEmpty(modName) || string.IsNullOrEmpty(vanillaName)) return false;
-        if (string.Equals(modName, vanillaName, StringComparison.OrdinalIgnoreCase)) return true;
-        return NormalizeClipName(modName) == NormalizeClipName(vanillaName);
-    }
-
-    private static string NormalizeClipName(string name)
-    {
-        var sb = new StringBuilder(name.Length);
-        for (int i = 0; i < name.Length; i++)
-        {
-            char c = name[i];
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) sb.Append(c);
-            else if (c >= 'A' && c <= 'Z') sb.Append((char)(c + 32));
-        }
-        return sb.ToString();
     }
 
     private static void SampleChannel(ModAnimChannel ch, float time, Transform t)
